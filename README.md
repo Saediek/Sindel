@@ -14,7 +14,7 @@ Sindel is a bash script that watches your project's source for changes and runs 
 ---
 
 ```bash
-url=""
+url="https://raw.githubusercontent.com/Saediek/Sindel/refs/heads/main/sindel"
 
 [[ -d "${HOME}/.local/bin/" ]] && curl --create-dirs --output "${HOME}/.local/bin/sindel" "$url"
 
