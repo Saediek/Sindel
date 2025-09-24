@@ -1,0 +1,226 @@
+#!/usr/bin/env bash
+
+declare __command_string=""
+declare __subcommand_string=""
+declare target="."
+declare -i interval=7
+declare -Ag checksum=()
+declare -a languages=()
+declare -a exclusions=()
+
+get-lang-extension() {
+    local -l language="${1}"
+    local ext="null"
+    case "${language}" in
+    "rust" | *"rs")
+        ext="rs"
+        ;;
+    "python" | *"py")
+        ext="py"
+        ;;
+    "javascript" | *"js")
+        ext="js"
+        ;;
+    "haskell" | *"hs")
+        ext="hs"
+        ;;
+    "c++" | *"cpp")
+        ext="cpp"
+        ;;
+    "ruby" | *"rb")
+        ext="rb"
+        ;;
+    *"make")
+        ext="make"
+        ;;
+    *"sol" | "solidity")
+        ext="sol"
+        ;;
+    *"go" | "golang")
+        ext="go"
+        ;;
+    "c")
+        ext="c"
+        ;;
+    "cpp")
+        ext="cpp"
+        ;;
+    "markdown" | "md")
+        ext="md"
+        ;;
+    "shell" | *"sh")
+        ext="sh"
+        ;;
+    "asm")
+        ext="asm"
+        ;;
+    *)
+        ext="${1}"
+        ;;
+    esac
+    echo "${ext}"
+}
+
+show-usage() {
+    cat >&2 <<IDGAF
+      sidel --directory <DIR>
+          --exclude /dir or file or pattern
+          --language -l Rust|Python|typescript|golang|haskell or pattern *rs|*hs|*py
+          --commands -c <command>
+          --subcommands -s <subcommand>
+          --interval -i <defaults to 5 seconds>
+
+Examples
+    Replace
+   -->  nodemon -w src/ -x "node start"
+WITH
+    sidel --language Javascript
+       --commands "node"
+       --subcommands "start"
+       --subcommands "run"
+
+       OR
+
+    cargo-watch -x "run"
+      -x "fmt"
+      -x "build"
+      -x "clippy"
+WITH
+    sidel --language Rust
+        --commands "cargo"
+        -s "fmt"
+        -s "build"
+        -s "clippy"
+
+        OR Multi-language Projects
+
+        sidel -l Rust
+        -l Python
+        -c "cargo build --release"
+        -c "cargo check --release"
+        -c "cargo clippy"
+        -c "cargo fmt "
+        -c "uv format"
+        -c "uv run --active python main.py "
+IDGAF
+}
+
+split() {
+    local __files__
+    IFS=$'\n' read -d "" -ra __files__ <<<"${1//$2/$'\n'}"
+    printf '%s\n' "${__files__[@]}"
+}
+
+__command_runner() {
+    bash -c "${1}"
+}
+
+parse-arguments() {
+    while [[ -n "$1" ]]; do
+        case "$1" in
+        "--help" | "-h")
+            show-usage && exit 0
+            ;;
+        "-c" | "--command")
+            __command_string+="${2}"
+            __command_string+="||"
+            shift 2
+            ;;
+        "-d" | "--directory")
+            target="${2}"
+            shift 2
+            ;;
+        "-i" | "--interval")
+            interval="${2}"
+            shift 2
+            ;;
+        "-s" | "--subcommand")
+            __subcommand_string+="${2}"
+            __subcommand_string+="||"
+            shift 2
+            ;;
+        "-l" | "--language")
+            languages+=("$2")
+            shift 2
+            ;;
+        "-e" | "--exclude")
+            exclusions+=("$2")
+            shift 2
+            ;;
+        *)
+            shift
+            ;;
+        esac
+    done
+
+}
+
+main() {
+
+    parse-arguments "$@"
+    IFS=$'||' read -a parsed_args <<<"${__command_string}"
+    IFS=$'||' read -a parsed_sub_args <<<"${__subcommand_string}"
+    local args_length=${#parsed_args[*]}
+    local args_sub_length=${#parsed_sub_args[*]}
+
+    if [[ -z "${__command_string}" ]]; then
+        show-usage && exit 1
+    fi
+
+    local scanner="fd -t=f ${target}"
+
+    for lang in ${languages[@]}; do
+        if [[ ! -z "$lang" ]]; then
+            scanner+=" -e $(get-lang-extension "${lang}")"
+        fi
+
+    done
+
+    for exclude in ${exclusions[@]}; do
+        if [[ ! -z "$exclude" ]]; then
+            scanner+=" -E ${exclude}"
+        fi
+    done
+
+    while true; do
+        ## Detect file changes in the main loop using file checksum
+        local changed=false
+        for file in $(${scanner}); do
+            _hash=$(md5sum $file)
+            # echo ${_hash}
+            if [[ "${checksum["${file}"]}" != "${_hash}" ]]; then
+                changed=true
+
+                checksum["${file}"]="${_hash}"
+            fi
+        done
+
+        ## On file changes concat the command with a subcommand and run the command
+        if $changed; then
+            clear
+            for ((i = 0; i < args_length; i++)); do
+                local var=${parsed_args[$i]}
+                if [ ! -z "$var" ]; then
+                    
+                    if ((args_sub_length > 0)); then
+                        for ((y = 0; y < args_sub_length; y++)); do
+                            local sub_var="${parsed_sub_args[$y]}"
+
+                            if [ ! -z "${sub_var}" ]; then
+                                __command_runner "${var} ${sub_var}"
+                            fi
+                        done
+                    else
+                        __command_runner "${var}"
+                    fi
+
+                fi
+            done
+        fi
+        sleep "${interval}s"
+    done
+}
+
+{
+    main "$@"
+}
